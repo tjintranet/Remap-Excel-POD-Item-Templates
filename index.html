@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel Column Remapper for POD Template Manager</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+        }
+        
+        .card {
+            box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .15);
+            border: none;
+        }
+        
+        .dropzone {
+            min-height: 120px;
+            border: 2px dashed #dee2e6;
+            transition: border-color 0.3s ease;
+            background-color: #fafafa;
+        }
+        
+        .dropzone:hover, .dropzone.dragover {
+            border-color: #0d6efd;
+            background-color: #f0f8ff;
+        }
+        
+        .mapping-row {
+            background-color: #f8f9fa;
+            border-radius: 0.375rem;
+            margin-bottom: 0.5rem;
+            padding: 0.75rem;
+        }
+        
+        .required-field {
+            border-left: 4px solid #dc3545;
+        }
+        
+        .optional-field {
+            border-left: 4px solid #28a745;
+        }
+        
+        .column-preview {
+            font-family: monospace;
+            font-size: 0.875rem;
+            background-color: #e9ecef;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            margin-top: 0.25rem;
+        }
+        
+        .sample-data {
+            max-height: 200px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            border-radius: 0.375rem;
+            padding: 0.5rem;
+            background-color: white;
+        }
+        
+        .fade-in {
+            opacity: 0;
+            animation: fadeIn 0.5s ease-in forwards;
+        }
+        
+        @keyframes fadeIn {
+            to { opacity: 1; }
+        }
+        
+        .alert {
+            transition: opacity 0.5s ease-in-out;
+        }
+        
+        .alert.fade-out {
+            opacity: 0;
+        }
+        
+        .info-badge {
+            font-size: 0.75rem;
+            margin-left: 0.5rem;
+        }
+        
+        .validation-error {
+            color: #dc3545;
+            font-size: 0.875rem;
+        }
+        
+        .validation-success {
+            color: #28a745;
+            font-size: 0.875rem;
+        }
+        
+        .mapping-table {
+            font-size: 0.875rem;
+        }
+        
+        .mapping-table th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+        }
+        
+        .value-mapping-section {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 0.375rem;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+        
+        .mapping-option {
+            margin-bottom: 0.5rem;
+        }
+        
+        .unmapped-value {
+            background-color: #f8d7da;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            margin: 0.25rem;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h4 class="mb-0">
+                        <i class="bi bi-arrow-left-right me-2"></i>
+                        Excel Column Remapper for POD Template Manager
+                    </h4>
+                    <div>
+                        <button class="btn btn-outline-light btn-sm me-2" onclick="saveConfig()" id="saveConfigBtn" disabled>
+                            <i class="bi bi-floppy me-1"></i>Save Config
+                        </button>
+                        <button class="btn btn-outline-light btn-sm" onclick="loadConfig()">
+                            <i class="bi bi-folder2-open me-1"></i>Load Config
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alert Area -->
+        <div class="alert alert-info fade show d-none" role="alert" id="alertBox">
+            <span id="alertMessage"></span>
+        </div>
+
+        <!-- Upload Section -->
+        <div class="card mb-4" id="uploadSection">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-cloud-arrow-up me-2"></i>
+                    Step 1: Upload Your Excel File
+                </h5>
+            </div>
+            <div class="card-body">
+                <label for="fileInput" class="form-label">Select Excel File</label>
+                <input type="file" class="form-control" id="fileInput" accept=".xlsx,.xls,.xlsm">
+                <div class="form-text">Supports .xls, .xlsx, .xlsm files</div>
+            </div>
+        </div>
+
+        <!-- File Info Section -->
+        <div class="accordion mb-4 d-none fade-in" id="fileInfoSection">
+            <div class="accordion-item">
+                <h2 class="accordion-header" id="fileInfoHeader">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#fileInfoCollapse" aria-expanded="false" aria-controls="fileInfoCollapse">
+                        <i class="bi bi-info-circle me-2"></i>
+                        File Information
+                    </button>
+                </h2>
+                <div id="fileInfoCollapse" class="accordion-collapse collapse" aria-labelledby="fileInfoHeader">
+                    <div class="accordion-body" id="fileInfoContent">
+                        <!-- File info will be populated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuration Section -->
+        <div class="card mb-4 d-none fade-in" id="configSection">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-gear me-2"></i>
+                    Configuration Management
+                </h5>
+                <small class="text-muted">Save your column and value mappings for future use</small>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Current Configuration</h6>
+                        <div id="currentConfigSummary">
+                            <!-- Configuration summary will appear here -->
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Actions</h6>
+                        <button class="btn btn-success btn-sm me-2" onclick="saveConfig()" id="saveConfigBtn2" disabled>
+                            <i class="bi bi-floppy me-1"></i>Save Current Configuration
+                        </button>
+                        <button class="btn btn-outline-primary btn-sm" onclick="loadConfig()">
+                            <i class="bi bi-folder2-open me-1"></i>Load Configuration
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mapping Section -->
+        <div class="card mb-4 d-none fade-in" id="mappingSection">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-diagram-3 me-2"></i>
+                    Step 2: Map Your Columns
+                </h5>
+                <small class="text-muted">Match your Excel columns to the required POD format. Note: Spine Size will be auto-calculated by the main app.</small>
+            </div>
+            <div class="card-body">
+                <div id="mappingContainer">
+                    <!-- Mapping controls will be populated here -->
+                </div>
+                
+                <div class="mt-4">
+                    <h6>Data Preview</h6>
+                    <div class="sample-data" id="previewData">
+                        <!-- Preview will be shown here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Value Mapping Section -->
+        <div class="card mb-4 d-none fade-in" id="valueMappingSection">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-arrows-angle-contract me-2"></i>
+                    Step 3: Map Values (Optional)
+                </h5>
+                <small class="text-muted">Map your data values to the standard POD options</small>
+            </div>
+            <div class="card-body" id="valueMappingContent">
+                <!-- Value mapping will be populated here -->
+            </div>
+        </div>
+
+        <!-- Validation Section -->
+        <div class="card mb-4 d-none fade-in" id="validationSection">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-check-circle me-2"></i>
+                    Data Validation Results
+                </h5>
+            </div>
+            <div class="card-body" id="validationContent">
+                <!-- Validation results will be shown here -->
+            </div>
+        </div>
+
+        <!-- Export Section -->
+        <div class="card mb-4 d-none fade-in" id="exportSection">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-download me-2"></i>
+                    Step 4: Export Remapped File
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Export Options</h6>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="includeHeaders" checked>
+                            <label class="form-check-label" for="includeHeaders">
+                                Include column headers in export
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="validateData" checked>
+                            <label class="form-check-label" for="validateData">
+                                Validate data before export
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="applyValueMappings" checked>
+                            <label class="form-check-label" for="applyValueMappings">
+                                Apply value mappings to data
+                            </label>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Statistics</h6>
+                        <p class="mb-1"><strong>Total rows:</strong> <span id="totalRows">0</span></p>
+                        <p class="mb-1"><strong>Mapped columns:</strong> <span id="mappedColumns">0</span></p>
+                        <p class="mb-1"><strong>Required fields mapped:</strong> <span id="requiredMapped">0/8</span></p>
+                        <p class="mb-1"><strong>Value mappings:</strong> <span id="valueMappingCount">0</span></p>
+                        <p class="mb-1"><strong>Validation status:</strong> <span id="validationStatus">Not validated</span></p>
+                    </div>
+                </div>
+                
+                <div class="mt-3">
+                    <button class="btn btn-info btn-lg me-2" onclick="validateMappedData()" id="validateBtn">
+                        <i class="bi bi-check-square me-2"></i>
+                        Validate Data
+                    </button>
+                    <button class="btn btn-success btn-lg" onclick="exportRemappedFile()" id="exportBtn" disabled>
+                        <i class="bi bi-file-earmark-arrow-down me-2"></i>
+                        Export Remapped Excel File
+                    </button>
+                    <button class="btn btn-outline-secondary btn-lg ms-2" onclick="resetApp()">
+                        <i class="bi bi-arrow-clockwise me-2"></i>
+                        Start Over
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save Configuration Modal -->
+    <div class="modal fade" id="saveConfigModal" tabindex="-1" aria-labelledby="saveConfigModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="saveConfigModalLabel">Save Configuration</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="configName" class="form-label">Configuration Name</label>
+                        <input type="text" class="form-control" id="configName" placeholder="e.g., Standard Book Import, Publisher XYZ Format">
+                        <div class="form-text">Choose a descriptive name for this mapping configuration</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="configDescription" class="form-label">Description (Optional)</label>
+                        <textarea class="form-control" id="configDescription" rows="3" placeholder="Describe what this configuration is for..."></textarea>
+                    </div>
+                    <div class="alert alert-info">
+                        <strong>This configuration will save:</strong>
+                        <ul class="mb-0 mt-2">
+                            <li>Column mappings (<span id="modalColumnCount">0</span> mapped)</li>
+                            <li>Value mappings (<span id="modalValueCount">0</span> defined)</li>
+                            <li>Export settings</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="downloadConfig()">Save Configuration</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
