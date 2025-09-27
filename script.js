@@ -1,6 +1,7 @@
 // Global variables
 let uploadedData = null;
 let columnMappings = {};
+let fixedValues = {}; // New: store fixed values for columns
 let valueMappings = {};
 let sourceColumns = [];
 let validationResults = null;
@@ -158,7 +159,12 @@ function createMappingInterface() {
                     <select class="form-select" id="mapping_${column.key}" onchange="updateMapping('${column.key}')">
                         <option value="">-- Select source column --</option>
                         ${sourceColumns.map(col => `<option value="${col}">${col}</option>`).join('')}
+                        <option value="__FIXED__">Use fixed value...</option>
                     </select>
+                    <input type="text" class="form-control mt-1 fixed-value-input d-none" 
+                           id="fixed_${column.key}" 
+                           placeholder="Enter fixed value"
+                           onchange="updateFixedValue('${column.key}', this.value)">
                 </div>
                 <div class="col-md-5">
                     <div class="column-preview" id="preview_${column.key}">
@@ -213,15 +219,28 @@ function updateMapping(columnKey) {
     const selectElement = document.getElementById(`mapping_${columnKey}`);
     const selectedColumn = selectElement.value;
     const previewElement = document.getElementById(`preview_${columnKey}`);
+    const fixedInputElement = document.getElementById(`fixed_${columnKey}`);
     
-    if (selectedColumn) {
+    if (selectedColumn === '__FIXED__') {
+        // Show fixed value input
+        fixedInputElement.classList.remove('d-none');
+        previewElement.innerHTML = '<span class="text-warning">Enter a fixed value</span>';
+        delete columnMappings[columnKey];
+    } else if (selectedColumn) {
+        // Hide fixed value input
+        fixedInputElement.classList.add('d-none');
+        delete fixedValues[columnKey];
+        
         columnMappings[columnKey] = selectedColumn;
         
         // Show preview data
         const sampleValues = uploadedData.slice(0, 5).map(row => row[selectedColumn]);
         previewElement.innerHTML = `Sample: ${sampleValues.join(', ')}`;
     } else {
+        // No selection
+        fixedInputElement.classList.add('d-none');
         delete columnMappings[columnKey];
+        delete fixedValues[columnKey];
         previewElement.innerHTML = 'Select a column to see preview data';
     }
     
@@ -237,10 +256,26 @@ function updateMapping(columnKey) {
     updateValueMappings();
 }
 
+function updateFixedValue(columnKey, value) {
+    if (value && value.trim()) {
+        fixedValues[columnKey] = value.trim();
+        const previewElement = document.getElementById(`preview_${columnKey}`);
+        previewElement.innerHTML = `<span class="badge bg-warning">Fixed: ${value.trim()}</span>`;
+    } else {
+        delete fixedValues[columnKey];
+        const previewElement = document.getElementById(`preview_${columnKey}`);
+        previewElement.innerHTML = '<span class="text-warning">Enter a fixed value</span>';
+    }
+    
+    updatePreviewData();
+    updateExportButtonState();
+    updateConfigSection();
+}
+
 function updatePreviewData() {
     const previewData = document.getElementById('previewData');
     
-    if (Object.keys(columnMappings).length === 0) {
+    if (Object.keys(columnMappings).length === 0 && Object.keys(fixedValues).length === 0) {
         previewData.innerHTML = '<p class="text-muted">Map some columns to see preview data</p>';
         return;
     }
@@ -251,7 +286,7 @@ function updatePreviewData() {
     // Headers in correct order
     const sortedColumns = [...requiredColumns].sort((a, b) => a.order - b.order);
     sortedColumns.forEach(column => {
-        if (columnMappings[column.key]) {
+        if (columnMappings[column.key] || fixedValues[column.key]) {
             tableHTML += `<th>${column.label}</th>`;
         }
     });
@@ -261,7 +296,9 @@ function updatePreviewData() {
     previewRows.forEach(row => {
         tableHTML += '<tr>';
         sortedColumns.forEach(column => {
-            if (columnMappings[column.key]) {
+            if (fixedValues[column.key]) {
+                tableHTML += `<td><span class="badge bg-warning">${fixedValues[column.key]}</span></td>`;
+            } else if (columnMappings[column.key]) {
                 const value = row[columnMappings[column.key]] || '';
                 tableHTML += `<td>${value}</td>`;
             }
@@ -403,13 +440,17 @@ function updateValueMappingStats() {
 }
 
 function updateExportButtonState() {
-    const requiredMapped = requiredColumns.filter(col => col.required && columnMappings[col.key]).length;
+    const requiredMapped = requiredColumns.filter(col => 
+        col.required && (columnMappings[col.key] || fixedValues[col.key])
+    ).length;
     const totalRequired = requiredColumns.filter(col => col.required).length;
-    const totalMapped = Object.keys(columnMappings).length;
+    const totalMapped = Object.keys(columnMappings).length + Object.keys(fixedValues).length;
+    const fixedCount = Object.keys(fixedValues).length;
     
     document.getElementById('totalRows').textContent = uploadedData ? uploadedData.length : 0;
     document.getElementById('mappedColumns').textContent = totalMapped;
     document.getElementById('requiredMapped').textContent = `${requiredMapped}/${totalRequired}`;
+    document.getElementById('fixedValueCount').textContent = fixedCount;
     
     const exportBtn = document.getElementById('exportBtn');
     const validateBtn = document.getElementById('validateBtn');
@@ -435,7 +476,7 @@ function applyValueMapping(value, columnKey) {
 }
 
 function validateMappedData() {
-    if (!uploadedData || Object.keys(columnMappings).length === 0) {
+    if (!uploadedData || (Object.keys(columnMappings).length === 0 && Object.keys(fixedValues).length === 0)) {
         showAlert('No data to validate', 'warning');
         return;
     }
@@ -454,8 +495,13 @@ function validateMappedData() {
 
         // Validate required fields
         requiredColumns.filter(col => col.required).forEach(column => {
-            if (columnMappings[column.key]) {
-                let value = row[columnMappings[column.key]];
+            let value = null;
+            
+            // Get value from fixed value or column mapping
+            if (fixedValues[column.key]) {
+                value = fixedValues[column.key];
+            } else if (columnMappings[column.key]) {
+                value = row[columnMappings[column.key]];
                 
                 // Apply value mapping if available
                 if (column.hasValueMapping) {
@@ -465,47 +511,47 @@ function validateMappedData() {
                     }
                     value = mappedValue;
                 }
-                
-                if (!value || value.toString().trim() === '') {
-                    results.errors.push(`Row ${rowNumber}: ${column.label} is required but empty`);
+            }
+            
+            if (!value || value.toString().trim() === '') {
+                results.errors.push(`Row ${rowNumber}: ${column.label} is required but empty`);
+                hasErrors = true;
+            }
+
+            // Specific validations
+            if (column.key === 'ISBN' && value) {
+                const isbn = value.toString().replace(/[-\s]/g, '');
+                if (isbn.length !== 13 || !/^\d{13}$/.test(isbn)) {
+                    results.errors.push(`Row ${rowNumber}: Invalid ISBN format (must be 13 digits)`);
                     hasErrors = true;
                 }
+            }
 
-                // Specific validations
-                if (column.key === 'ISBN' && value) {
-                    const isbn = value.toString().replace(/[-\s]/g, '');
-                    if (isbn.length !== 13 || !/^\d{13}$/.test(isbn)) {
-                        results.errors.push(`Row ${rowNumber}: Invalid ISBN format (must be 13 digits)`);
-                        hasErrors = true;
-                    }
-                }
+            if (column.key === 'Title' && value && value.toString().length > 58) {
+                results.errors.push(`Row ${rowNumber}: Title exceeds 58 characters (${value.toString().length} chars): "${value}"`);
+                hasErrors = true;
+            }
 
-                if (column.key === 'Title' && value && value.toString().length > 58) {
-                    results.errors.push(`Row ${rowNumber}: Title exceeds 58 characters (${value.toString().length} chars): "${value}"`);
+            if (column.key === 'Paper Type' && value && !validOptions['Paper Type'].includes(value)) {
+                results.errors.push(`Row ${rowNumber}: Invalid paper type "${value}"`);
+                hasErrors = true;
+            }
+
+            if (column.key === 'Binding Style' && value && !validOptions['Binding Style'].includes(value)) {
+                results.errors.push(`Row ${rowNumber}: Invalid binding style "${value}" (must be Limp or Cased)`);
+                hasErrors = true;
+            }
+
+            if (column.key === 'Lamination' && value && !validOptions['Lamination'].includes(value)) {
+                results.errors.push(`Row ${rowNumber}: Invalid lamination "${value}" (must be Gloss, Matt, or None)`);
+                hasErrors = true;
+            }
+
+            if ((column.key === 'Trim Height' || column.key === 'Trim Width' || column.key === 'Page Extent') && value) {
+                const numValue = parseFloat(value);
+                if (isNaN(numValue) || numValue <= 0) {
+                    results.errors.push(`Row ${rowNumber}: ${column.label} must be a positive number`);
                     hasErrors = true;
-                }
-
-                if (column.key === 'Paper Type' && value && !validOptions['Paper Type'].includes(value)) {
-                    results.errors.push(`Row ${rowNumber}: Invalid paper type "${value}"`);
-                    hasErrors = true;
-                }
-
-                if (column.key === 'Binding Style' && value && !validOptions['Binding Style'].includes(value)) {
-                    results.errors.push(`Row ${rowNumber}: Invalid binding style "${value}" (must be Limp or Cased)`);
-                    hasErrors = true;
-                }
-
-                if (column.key === 'Lamination' && value && !validOptions['Lamination'].includes(value)) {
-                    results.errors.push(`Row ${rowNumber}: Invalid lamination "${value}" (must be Gloss, Matt, or None)`);
-                    hasErrors = true;
-                }
-
-                if ((column.key === 'Trim Height' || column.key === 'Trim Width' || column.key === 'Page Extent') && value) {
-                    const numValue = parseFloat(value);
-                    if (isNaN(numValue) || numValue <= 0) {
-                        results.errors.push(`Row ${rowNumber}: ${column.label} must be a positive number`);
-                        hasErrors = true;
-                    }
                 }
             }
         });
@@ -589,7 +635,7 @@ function updateExportButtonValidation() {
 }
 
 function exportRemappedFile() {
-    if (!uploadedData || Object.keys(columnMappings).length === 0) {
+    if (!uploadedData || (Object.keys(columnMappings).length === 0 && Object.keys(fixedValues).length === 0)) {
         showAlert('No data to export', 'warning');
         return;
     }
@@ -615,8 +661,13 @@ function exportRemappedFile() {
         
         uploadedData.forEach((row, index) => {
             const newRow = sortedColumns.map(column => {
-                if (columnMappings[column.key]) {
-                    let value = row[columnMappings[column.key]] || '';
+                let value = '';
+                
+                // Check for fixed value first
+                if (fixedValues[column.key]) {
+                    value = fixedValues[column.key];
+                } else if (columnMappings[column.key]) {
+                    value = row[columnMappings[column.key]] || '';
                     
                     // Apply value mappings if enabled
                     if (applyValueMappingsOption && column.hasValueMapping) {
@@ -626,25 +677,42 @@ function exportRemappedFile() {
                         }
                         value = mappedValue;
                     }
-                    
-                    // Apply transformations
-                    // Note: Titles over 58 characters are flagged as errors but not truncated
-                    
-                    // Basic validation if enabled
-                    if (validateData && column.required && !value) {
-                        invalidRows++;
-                    }
-                    
-                    return value;
                 }
-                return '';
+                
+                // Basic validation if enabled
+                if (validateData && column.required && !value) {
+                    invalidRows++;
+                }
+                
+                return value;
             });
             
             remappedData.push(newRow);
         });
         
-        // Create workbook
+        // Create workbook with proper ISBN formatting
         const worksheet = XLSX.utils.aoa_to_sheet(remappedData);
+        
+        // Format ISBN column as number with no decimals
+        const isbnColumnIndex = sortedColumns.findIndex(col => col.key === 'ISBN');
+        if (isbnColumnIndex !== -1) {
+            const startRow = includeHeaders ? 1 : 0;
+            const endRow = remappedData.length - 1;
+            
+            for (let i = startRow; i <= endRow; i++) {
+                const cellAddress = XLSX.utils.encode_cell({ r: i, c: isbnColumnIndex });
+                if (worksheet[cellAddress]) {
+                    const isbn = worksheet[cellAddress].v;
+                    if (isbn) {
+                        // Convert to number and set format
+                        worksheet[cellAddress].t = 'n'; // number type
+                        worksheet[cellAddress].v = parseFloat(isbn.toString().replace(/[-\s]/g, ''));
+                        worksheet[cellAddress].z = '0'; // number format with no decimals
+                    }
+                }
+            }
+        }
+        
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, 'POD_Template_Data');
         
@@ -689,6 +757,7 @@ function downloadTemplate() {
 function resetApp() {
     uploadedData = null;
     columnMappings = {};
+    fixedValues = {};
     sourceColumns = [];
     validationResults = null;
     initializeValueMappings();
@@ -727,13 +796,14 @@ function showAlert(message, type = 'info', duration = 4000) {
 // Configuration Management Functions
 function updateConfigSection() {
     const hasColumnMappings = Object.keys(columnMappings).length > 0;
+    const hasFixedValues = Object.keys(fixedValues).length > 0;
     const hasValueMappings = Object.values(valueMappings).some(mapping => Object.keys(mapping).length > 0);
     
     const configSection = document.getElementById('configSection');
     const saveConfigBtn = document.getElementById('saveConfigBtn');
     const saveConfigBtn2 = document.getElementById('saveConfigBtn2');
     
-    if (hasColumnMappings) {
+    if (hasColumnMappings || hasFixedValues) {
         configSection.classList.remove('d-none');
         saveConfigBtn.disabled = false;
         saveConfigBtn2.disabled = false;
@@ -748,9 +818,12 @@ function updateConfigSection() {
 function updateConfigSummary() {
     const summaryElement = document.getElementById('currentConfigSummary');
     const columnCount = Object.keys(columnMappings).length;
+    const fixedCount = Object.keys(fixedValues).length;
     const valueCount = Object.values(valueMappings).reduce((sum, mapping) => sum + Object.keys(mapping).length, 0);
     
-    const requiredMapped = requiredColumns.filter(col => col.required && columnMappings[col.key]).length;
+    const requiredMapped = requiredColumns.filter(col => 
+        col.required && (columnMappings[col.key] || fixedValues[col.key])
+    ).length;
     const totalRequired = requiredColumns.filter(col => col.required).length;
     
     let statusBadge = '';
@@ -764,6 +837,7 @@ function updateConfigSummary() {
         <div class="small">
             <p class="mb-1"><strong>Status:</strong> ${statusBadge}</p>
             <p class="mb-1"><strong>Column mappings:</strong> ${columnCount} (${requiredMapped}/${totalRequired} required)</p>
+            <p class="mb-1"><strong>Fixed values:</strong> ${fixedCount}</p>
             <p class="mb-1"><strong>Value mappings:</strong> ${valueCount}</p>
             ${currentConfigName ? `<p class="mb-0"><strong>Based on:</strong> ${currentConfigName}</p>` : ''}
         </div>
@@ -771,14 +845,15 @@ function updateConfigSummary() {
 }
 
 function saveConfig() {
-    if (Object.keys(columnMappings).length === 0) {
-        showAlert('No column mappings to save', 'warning');
+    if (Object.keys(columnMappings).length === 0 && Object.keys(fixedValues).length === 0) {
+        showAlert('No column mappings or fixed values to save', 'warning');
         return;
     }
     
     // Update modal with current stats
     document.getElementById('modalColumnCount').textContent = Object.keys(columnMappings).length;
     document.getElementById('modalValueCount').textContent = Object.values(valueMappings).reduce((sum, mapping) => sum + Object.keys(mapping).length, 0);
+    document.getElementById('modalFixedCount').textContent = Object.keys(fixedValues).length;
     
     // Generate default name
     const timestamp = new Date().toLocaleDateString();
@@ -801,9 +876,10 @@ function downloadConfig() {
     const config = {
         name: configName,
         description: configDescription,
-        version: '1.0',
+        version: '1.1',
         createdAt: new Date().toISOString(),
         columnMappings: columnMappings,
+        fixedValues: fixedValues,
         valueMappings: valueMappings,
         exportSettings: {
             includeHeaders: document.getElementById('includeHeaders')?.checked || true,
@@ -878,15 +954,18 @@ function loadConfig() {
 function applyConfig(config) {
     try {
         // Validate config structure
-        if (!config.columnMappings || !config.valueMappings) {
+        if (!config.columnMappings && !config.fixedValues) {
             throw new Error('Invalid configuration format');
         }
         
         // Apply column mappings
-        columnMappings = { ...config.columnMappings };
+        columnMappings = { ...config.columnMappings } || {};
+        
+        // Apply fixed values
+        fixedValues = { ...config.fixedValues } || {};
         
         // Apply value mappings
-        valueMappings = { ...config.valueMappings };
+        valueMappings = { ...config.valueMappings } || {};
         
         // Apply export settings if available
         if (config.exportSettings) {
@@ -938,6 +1017,24 @@ function updateMappingSelections() {
             const previewElement = document.getElementById(`preview_${columnKey}`);
             if (previewElement) {
                 previewElement.innerHTML = '<span class="text-warning">Mapped column not found in current file</span>';
+            }
+        }
+    });
+    
+    // Update fixed values
+    Object.keys(fixedValues).forEach(columnKey => {
+        const selectElement = document.getElementById(`mapping_${columnKey}`);
+        const fixedInputElement = document.getElementById(`fixed_${columnKey}`);
+        const previewElement = document.getElementById(`preview_${columnKey}`);
+        
+        if (selectElement) {
+            selectElement.value = '__FIXED__';
+            if (fixedInputElement) {
+                fixedInputElement.classList.remove('d-none');
+                fixedInputElement.value = fixedValues[columnKey];
+            }
+            if (previewElement) {
+                previewElement.innerHTML = `<span class="badge bg-warning">Fixed: ${fixedValues[columnKey]}</span>`;
             }
         }
     });
