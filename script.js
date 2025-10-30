@@ -1,8 +1,9 @@
 // Global variables
 let uploadedData = null;
 let columnMappings = {};
-let fixedValues = {}; // New: store fixed values for columns
+let fixedValues = {}; 
 let valueMappings = {};
+let conditionalPaperMappings = {}; 
 let sourceColumns = [];
 let validationResults = null;
 let currentConfigName = null;
@@ -11,32 +12,39 @@ let currentConfigName = null;
 const requiredColumns = [
     { key: 'ISBN', label: 'ISBN', required: true, description: '13-digit ISBN number', order: 1 },
     { key: 'Title', label: 'Title', required: true, description: 'Book title (max 58 characters)', order: 2 },
-    { key: 'Trim Height', label: 'Trim Height', required: true, description: 'Height in mm', order: 3 },
-    { key: 'Trim Width', label: 'Trim Width', required: true, description: 'Width in mm', order: 4 },
-    { key: 'Paper Type', label: 'Paper Type', required: true, description: 'Paper specification', order: 5, hasValueMapping: true },
-    { key: 'Binding Style', label: 'Binding Style', required: true, description: 'Limp or Cased', order: 6, hasValueMapping: true },
-    { key: 'Page Extent', label: 'Page Extent', required: true, description: 'Number of pages', order: 7 },
-    { key: 'Lamination', label: 'Lamination', required: true, description: 'Gloss, Matt, or None', order: 8, hasValueMapping: true },
-    { key: 'Plate Section 1', label: 'Plate Section 1', required: false, description: 'Optional: Insert after p[page]-[pages]pp-[paper type]', order: 9 },
-    { key: 'Plate Section 2', label: 'Plate Section 2', required: false, description: 'Optional: Insert after p[page]-[pages]pp-[paper type]', order: 10 }
+    { key: 'Product Type', label: 'Product Type', required: false, description: 'Standard or Premium (optional)', order: 3, hasValueMapping: true },
+    { key: 'Trim Height', label: 'Trim Height', required: true, description: 'Height in mm', order: 4 },
+    { key: 'Trim Width', label: 'Trim Width', required: true, description: 'Width in mm', order: 5 },
+    { key: 'Paper Type', label: 'Paper Type', required: true, description: 'Paper specification', order: 6, hasValueMapping: true },
+    { key: 'Binding Style', label: 'Binding Style', required: true, description: 'Limp or Cased', order: 7, hasValueMapping: true },
+    { key: 'Page Extent', label: 'Page Extent', required: true, description: 'Number of pages', order: 8 },
+    { key: 'Lamination', label: 'Lamination', required: true, description: 'Gloss, Matt, or None', order: 9, hasValueMapping: true },
+    { key: 'Plate Section 1', label: 'Plate Section 1', required: false, description: 'Optional: Insert after p[page]-[pages]pp-[paper type]', order: 10 },
+    { key: 'Plate Section 2', label: 'Plate Section 2', required: false, description: 'Optional: Insert after p[page]-[pages]pp-[paper type]', order: 11 }
 ];
 
 // Valid values from the template
 const validOptions = {
+    'Product Type': ['Standard', 'Premium'],
     'Paper Type': [
+        // Standard Papers
         'Amber Preprint 80 gsm',
         'Woodfree 80 gsm',
         'Munken Print Cream 70 gsm',
-        'Munken Print Cream 80 gsm',
-        'Navigator 80 gsm',
         'LetsGo Silk 90 gsm',
         'Matt 115 gsm',
-        'Holmen Book Cream 60 gsm',
+        'Ulverscroft Book Cream 60 gsm',
         'Enso 70 gsm',
         'HolmenBulky 52 gsm',
         'HolmenBook 55 gsm',
         'HolmenCream 65 gsm',
         'HolmenBook 52 gsm',
+        'Navigator 80 gsm',
+        'CUP MunkenPure 80 gsm',
+        'Clairjet 90 gsm',
+        
+        // Premium Papers
+        'Magno 90 gsm',
         'Premium Mono 90 gsm',
         'Premium Colour 90 gsm'
     ],
@@ -44,12 +52,43 @@ const validOptions = {
     'Lamination': ['Gloss', 'Matt', 'None']
 };
 
+// Paper types by product category
+const paperTypesByProduct = {
+    'Standard': [
+        'Amber Preprint 80 gsm',
+        'Woodfree 80 gsm',
+        'Munken Print Cream 70 gsm',
+        'LetsGo Silk 90 gsm',
+        'Matt 115 gsm',
+        'Ulverscroft Book Cream 60 gsm',
+        'Enso 70 gsm',
+        'HolmenBulky 52 gsm',
+        'HolmenBook 55 gsm',
+        'HolmenCream 65 gsm',
+        'HolmenBook 52 gsm',
+        'Navigator 80 gsm',
+        'CUP MunkenPure 80 gsm',
+        'Clairjet 90 gsm'
+        
+    ],
+    'Premium': [
+        'Magno 90 gsm',
+        'Premium Mono 90 gsm',
+        'Premium Colour 90 gsm'
+    ]
+};
+
 // Initialize value mappings
 function initializeValueMappings() {
     valueMappings = {
+        'Product Type': {},
         'Paper Type': {},
         'Binding Style': {},
         'Lamination': {}
+    };
+    conditionalPaperMappings = {
+        'Standard': {},
+        'Premium': {}
     };
 }
 
@@ -179,6 +218,9 @@ function createMappingInterface() {
 
     // Auto-map columns based on similarity
     autoMapColumns();
+    
+    // Remove auto-default for Product Type - make it truly optional
+    // Users can map it manually if needed
     
     document.getElementById('mappingSection').classList.remove('d-none');
     document.getElementById('exportSection').classList.remove('d-none');
@@ -329,26 +371,133 @@ function updateValueMappings() {
         const uniqueValues = [...new Set(uploadedData.map(row => row[sourceColumn]).filter(val => val))];
         const validValues = validOptions[column.key];
         
+        // Special handling for Paper Type when Product Type is also mapped
+        if (column.key === 'Paper Type' && columnMappings['Product Type']) {
+            html += createConditionalPaperMapping();
+        } else {
+            html += `
+                <div class="value-mapping-section">
+                    <h6><i class="bi bi-arrow-right me-2"></i>${column.label} Value Mapping</h6>
+                    <p class="text-muted">Map your values to standard POD options:</p>
+                    
+                    <div class="row">
+                        <div class="col-md-6">
+                            <strong>Your Values (${uniqueValues.length})</strong>
+                            <div class="mt-2">
+                                ${uniqueValues.map(value => {
+                                    const escapedValue = value.replace(/'/g, "\\'");
+                                    return `
+                                    <div class="mapping-option">
+                                        <div class="input-group input-group-sm">
+                                            <span class="input-group-text">${value}</span>
+                                            <select class="form-select" onchange="updateValueMapping('${column.key}', '${escapedValue}', this.value)">
+                                                <option value="">-- Map to standard value --</option>
+                                                ${validValues.map(validValue => `
+                                                    <option value="${validValue}" ${valueMappings[column.key][value] === validValue ? 'selected' : ''}>
+                                                        ${validValue}
+                                                    </option>
+                                                `).join('')}
+                                            </select>
+                                        </div>
+                                    </div>
+                                `}).join('')}
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <strong>Standard POD Values</strong>
+                            <div class="mt-2">
+                                ${validValues.map(value => `
+                                    <span class="badge bg-success me-1 mb-1">${value}</span>
+                                `).join('')}
+                            </div>
+                            
+                            <div class="mt-3">
+                                <button class="btn btn-outline-primary btn-sm" onclick="autoMapValues('${column.key}')">
+                                    <i class="bi bi-magic me-1"></i>Auto-map similar values
+                                </button>
+                                <button class="btn btn-outline-secondary btn-sm" onclick="clearValueMappings('${column.key}')">
+                                    <i class="bi bi-x-lg me-1"></i>Clear mappings
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    });
+    
+    valueMappingContent.innerHTML = html;
+    document.getElementById('valueMappingSection').classList.remove('d-none');
+    updateValueMappingStats();
+}
+
+function createConditionalPaperMapping() {
+    const productTypeColumn = columnMappings['Product Type'];
+    const paperTypeColumn = columnMappings['Paper Type'];
+    
+    const productTypeValues = [...new Set(uploadedData.map(row => row[productTypeColumn]).filter(val => val))];
+    const paperTypeValues = [...new Set(uploadedData.map(row => row[paperTypeColumn]).filter(val => val))];
+    
+    let html = `
+        <div class="value-mapping-section">
+            <h6><i class="bi bi-arrow-right me-2"></i>Paper Type Conditional Mapping</h6>
+            <p class="text-muted">Map paper types based on Product Type. This allows different papers for Standard vs Premium products.</p>
+    `;
+    
+    // Create mapping for each Product Type value
+    productTypeValues.forEach(productTypeValue => {
+        const mappedProductType = valueMappings['Product Type'][productTypeValue] || productTypeValue;
+        const isPremium = mappedProductType === 'Premium';
+        
+        // Show all paper types for all product types
+        const availablePapers = validOptions['Paper Type'];
+        
         html += `
-            <div class="value-mapping-section">
-                <h6><i class="bi bi-arrow-right me-2"></i>${column.label} Value Mapping</h6>
-                <p class="text-muted">Map your values to standard POD options:</p>
+            <div class="mt-3 p-3 border rounded" style="background-color: ${isPremium ? '#fff3e0' : '#e8f5e9'};">
+                <h6 class="mb-2">
+                    <span class="badge ${isPremium ? 'bg-warning' : 'bg-success'}">
+                        When Product Type = "${productTypeValue}"
+                    </span>
+                    ${mappedProductType !== productTypeValue ? `<small class="text-muted">(maps to "${mappedProductType}")</small>` : ''}
+                </h6>
+                
+                ${isPremium ? `
+                    <div class="alert alert-info p-2 mb-3">
+                        <strong>Quick Set:</strong> Set all Premium papers to the same value
+                        <div class="input-group input-group-sm mt-2">
+                            <span class="input-group-text">Apply to all:</span>
+                            <select class="form-select" id="bulkPremiumPaper_${productTypeValue}">
+                                <option value="">-- Select paper to apply to all --</option>
+                                ${availablePapers.map(validPaper => `
+                                    <option value="${validPaper}">${validPaper}</option>
+                                `).join('')}
+                            </select>
+                            <button class="btn btn-primary" onclick="applyBulkPremiumPaper('${mappedProductType}', '${productTypeValue}')">
+                                <i class="bi bi-check-all me-1"></i>Apply
+                            </button>
+                        </div>
+                    </div>
+                ` : ''}
                 
                 <div class="row">
-                    <div class="col-md-6">
-                        <strong>Your Values (${uniqueValues.length})</strong>
+                    <div class="col-12">
+                        <strong>Map Paper Type values:</strong>
                         <div class="mt-2">
-                            ${uniqueValues.map(value => {
-                                const escapedValue = value.replace(/'/g, "\\'");
+                            ${paperTypeValues.map(paperValue => {
+                                const escapedPaperValue = paperValue.replace(/'/g, "\\'");
+                                const storageKey = mappedProductType || productTypeValue;
+                                const currentMapping = conditionalPaperMappings[storageKey]?.[paperValue] || '';
+                                
                                 return `
                                 <div class="mapping-option">
                                     <div class="input-group input-group-sm">
-                                        <span class="input-group-text">${value}</span>
-                                        <select class="form-select" onchange="updateValueMapping('${column.key}', '${escapedValue}', this.value)">
-                                            <option value="">-- Map to standard value --</option>
-                                            ${validValues.map(validValue => `
-                                                <option value="${validValue}" ${valueMappings[column.key][value] === validValue ? 'selected' : ''}>
-                                                    ${validValue}
+                                        <span class="input-group-text" style="min-width: 150px;">${paperValue}</span>
+                                        <span class="input-group-text">→</span>
+                                        <select class="form-select paper-mapping-select-${storageKey}" onchange="updateConditionalPaperMapping('${storageKey}', '${escapedPaperValue}', this.value)">
+                                            <option value="">-- Select paper type --</option>
+                                            ${availablePapers.map(validPaper => `
+                                                <option value="${validPaper}" ${currentMapping === validPaper ? 'selected' : ''}>
+                                                    ${validPaper}
                                                 </option>
                                             `).join('')}
                                         </select>
@@ -357,31 +506,21 @@ function updateValueMappings() {
                             `}).join('')}
                         </div>
                     </div>
-                    <div class="col-md-6">
-                        <strong>Standard POD Values</strong>
-                        <div class="mt-2">
-                            ${validValues.map(value => `
-                                <span class="badge bg-success me-1 mb-1">${value}</span>
-                            `).join('')}
-                        </div>
-                        
-                        <div class="mt-3">
-                            <button class="btn btn-outline-primary btn-sm" onclick="autoMapValues('${column.key}')">
-                                <i class="bi bi-magic me-1"></i>Auto-map similar values
-                            </button>
-                            <button class="btn btn-outline-secondary btn-sm" onclick="clearValueMappings('${column.key}')">
-                                <i class="bi bi-x-lg me-1"></i>Clear mappings
-                            </button>
-                        </div>
-                    </div>
                 </div>
             </div>
         `;
     });
     
-    valueMappingContent.innerHTML = html;
-    document.getElementById('valueMappingSection').classList.remove('d-none');
-    updateValueMappingStats();
+    html += `
+            <div class="mt-3">
+                <button class="btn btn-outline-secondary btn-sm" onclick="clearConditionalPaperMappings()">
+                    <i class="bi bi-x-lg me-1"></i>Clear all paper mappings
+                </button>
+            </div>
+        </div>
+    `;
+    
+    return html;
 }
 
 function updateValueMapping(columnKey, sourceValue, targetValue) {
@@ -395,7 +534,69 @@ function updateValueMapping(columnKey, sourceValue, targetValue) {
         delete valueMappings[columnKey][sourceValue];
     }
     
+    // If Product Type mapping changed, refresh Paper Type mappings
+    if (columnKey === 'Product Type' && columnMappings['Paper Type']) {
+        updateValueMappings();
+    }
+    
     updateValueMappingStats();
+}
+
+function updateConditionalPaperMapping(productType, paperValue, targetPaper) {
+    if (!conditionalPaperMappings[productType]) {
+        conditionalPaperMappings[productType] = {};
+    }
+    
+    if (targetPaper) {
+        conditionalPaperMappings[productType][paperValue] = targetPaper;
+        console.log(`Saved: conditionalPaperMappings["${productType}"]["${paperValue}"] = "${targetPaper}"`);
+    } else {
+        delete conditionalPaperMappings[productType][paperValue];
+        console.log(`Cleared: conditionalPaperMappings["${productType}"]["${paperValue}"]`);
+    }
+    
+    console.log("Current conditionalPaperMappings:", JSON.stringify(conditionalPaperMappings, null, 2));
+    updateValueMappingStats();
+}
+
+function clearConditionalPaperMappings() {
+    conditionalPaperMappings = {
+        'Standard': {},
+        'Premium': {}
+    };
+    updateValueMappings();
+}
+
+function applyBulkPremiumPaper(productType, productTypeValue) {
+    const selectElement = document.getElementById(`bulkPremiumPaper_${productTypeValue}`);
+    const selectedPaper = selectElement.value;
+    
+    if (!selectedPaper) {
+        showAlert('Please select a paper type to apply', 'warning');
+        return;
+    }
+    
+    // Get all paper type values from the data
+    const paperTypeColumn = columnMappings['Paper Type'];
+    const paperTypeValues = [...new Set(uploadedData.map(row => row[paperTypeColumn]).filter(val => val))];
+    
+    // Apply the selected paper to all paper type values for this product type
+    if (!conditionalPaperMappings[productType]) {
+        conditionalPaperMappings[productType] = {};
+    }
+    
+    paperTypeValues.forEach(paperValue => {
+        conditionalPaperMappings[productType][paperValue] = selectedPaper;
+    });
+    
+    console.log(`Bulk applied "${selectedPaper}" to all Premium papers`);
+    console.log("Updated conditionalPaperMappings:", JSON.stringify(conditionalPaperMappings, null, 2));
+    
+    // Refresh the interface to show the updated mappings
+    updateValueMappings();
+    updateValueMappingStats();
+    
+    showAlert(`Applied "${selectedPaper}" to all ${productType} paper mappings`, 'success');
 }
 
 function autoMapValues(columnKey) {
@@ -433,9 +634,15 @@ function clearValueMappings(columnKey) {
 }
 
 function updateValueMappingStats() {
-    const totalMappings = Object.values(valueMappings).reduce((sum, mappings) => 
+    let totalMappings = Object.values(valueMappings).reduce((sum, mappings) => 
         sum + Object.keys(mappings).length, 0
     );
+    
+    // Add conditional paper mappings count
+    totalMappings += Object.values(conditionalPaperMappings).reduce((sum, mappings) => 
+        sum + Object.keys(mappings).length, 0
+    );
+    
     document.getElementById('valueMappingCount').textContent = totalMappings;
 }
 
@@ -468,7 +675,20 @@ function updateExportButtonState() {
     }
 }
 
-function applyValueMapping(value, columnKey) {
+function applyValueMapping(value, columnKey, row) {
+    // Special handling for Paper Type with conditional mapping
+    if (columnKey === 'Paper Type' && columnMappings['Product Type']) {
+        const productTypeColumn = columnMappings['Product Type'];
+        const rawProductType = row[productTypeColumn];
+        const mappedProductType = valueMappings['Product Type'][rawProductType] || rawProductType;
+        
+        // Check conditional mapping first
+        if (conditionalPaperMappings[mappedProductType] && conditionalPaperMappings[mappedProductType][value]) {
+            return conditionalPaperMappings[mappedProductType][value];
+        }
+    }
+    
+    // Standard value mapping
     if (valueMappings[columnKey] && valueMappings[columnKey][value]) {
         return valueMappings[columnKey][value];
     }
@@ -505,7 +725,7 @@ function validateMappedData() {
                 
                 // Apply value mapping if available
                 if (column.hasValueMapping) {
-                    const mappedValue = applyValueMapping(value, column.key);
+                    const mappedValue = applyValueMapping(value, column.key, row);
                     if (mappedValue !== value) {
                         results.valueMappingsApplied++;
                     }
@@ -532,6 +752,11 @@ function validateMappedData() {
                 hasErrors = true;
             }
 
+            if (column.key === 'Product Type' && value && !validOptions['Product Type'].includes(value)) {
+                results.errors.push(`Row ${rowNumber}: Invalid product type "${value}" (must be Standard or Premium)`);
+                hasErrors = true;
+            }
+
             if (column.key === 'Paper Type' && value && !validOptions['Paper Type'].includes(value)) {
                 results.errors.push(`Row ${rowNumber}: Invalid paper type "${value}"`);
                 hasErrors = true;
@@ -555,6 +780,20 @@ function validateMappedData() {
                 }
             }
         });
+
+        // Validate Product Type and Paper Type compatibility
+        const productType = fixedValues['Product Type'] || 
+                           (columnMappings['Product Type'] ? applyValueMapping(row[columnMappings['Product Type']], 'Product Type', row) : null);
+        const paperType = fixedValues['Paper Type'] || 
+                         (columnMappings['Paper Type'] ? applyValueMapping(row[columnMappings['Paper Type']], 'Paper Type', row) : null);
+        
+        // Only validate compatibility if Product Type is provided
+        if (productType && paperType) {
+            const allowedPapers = paperTypesByProduct[productType];
+            if (allowedPapers && !allowedPapers.includes(paperType)) {
+                results.warnings.push(`Row ${rowNumber}: Paper type "${paperType}" may not be compatible with Product Type "${productType}"`);
+            }
+        }
 
         if (!hasErrors) {
             results.validRows++;
@@ -648,8 +887,10 @@ function exportRemappedFile() {
         // Create remapped data in the exact column order
         const remappedData = [];
         
-        // Sort columns by order for export
-        const sortedColumns = [...requiredColumns].sort((a, b) => a.order - b.order);
+        // Sort columns by order for export, but exclude Product Type
+        const sortedColumns = [...requiredColumns]
+            .filter(col => col.key !== 'Product Type')
+            .sort((a, b) => a.order - b.order);
         
         if (includeHeaders) {
             const headers = sortedColumns.map(col => col.label);
@@ -659,23 +900,86 @@ function exportRemappedFile() {
         let invalidRows = 0;
         let appliedMappings = 0;
         
+        console.log("=== Export Debug Info ===");
+        console.log("Conditional Paper Mappings:", conditionalPaperMappings);
+        console.log("Value Mappings:", valueMappings);
+        console.log("Column Mappings:", columnMappings);
+        
         uploadedData.forEach((row, index) => {
-            const newRow = sortedColumns.map(column => {
+            // First pass: build a map of values with mappings applied for this row
+            // NOTE: Must include ALL columns (including Product Type) for conditional mapping logic
+            const rowValueMap = {};
+            
+            const allColumns = [...requiredColumns].sort((a, b) => a.order - b.order);
+            allColumns.forEach(column => {
                 let value = '';
                 
-                // Check for fixed value first
                 if (fixedValues[column.key]) {
                     value = fixedValues[column.key];
                 } else if (columnMappings[column.key]) {
                     value = row[columnMappings[column.key]] || '';
                     
-                    // Apply value mappings if enabled
-                    if (applyValueMappingsOption && column.hasValueMapping) {
-                        const mappedValue = applyValueMapping(value, column.key);
-                        if (mappedValue !== value) {
-                            appliedMappings++;
+                    // For Product Type, apply mapping first to use in conditional logic
+                    if (column.key === 'Product Type' && applyValueMappingsOption && column.hasValueMapping) {
+                        if (valueMappings['Product Type'] && valueMappings['Product Type'][value]) {
+                            value = valueMappings['Product Type'][value];
                         }
-                        value = mappedValue;
+                    }
+                }
+                
+                rowValueMap[column.key] = value;
+            });
+            
+            // Second pass: build the actual row with conditional mappings
+            const newRow = sortedColumns.map(column => {
+                let value = rowValueMap[column.key];
+                
+                // Apply value mappings if enabled
+                if (applyValueMappingsOption && column.hasValueMapping && value) {
+                    // Special handling for Paper Type with conditional mapping
+                    if (column.key === 'Paper Type' && rowValueMap['Product Type']) {
+                        const productType = rowValueMap['Product Type'];
+                        
+                        // Get the original source value from the row
+                        const sourcePaperValue = columnMappings['Paper Type'] ? row[columnMappings['Paper Type']] : value;
+                        
+                        if (index < 3) {
+                            console.log(`Row ${index}: Product Type = "${productType}", Source Paper = "${sourcePaperValue}"`);
+                            console.log(`  Checking conditionalPaperMappings["${productType}"]["${sourcePaperValue}"]`);
+                            console.log(`  Result:`, conditionalPaperMappings[productType]?.[sourcePaperValue]);
+                        }
+                        
+                        // Check conditional mapping first
+                        if (conditionalPaperMappings[productType] && conditionalPaperMappings[productType][sourcePaperValue]) {
+                            const mappedValue = conditionalPaperMappings[productType][sourcePaperValue];
+                            if (mappedValue !== value) {
+                                appliedMappings++;
+                            }
+                            value = mappedValue;
+                            if (index < 3) {
+                                console.log(`  Used conditional mapping: "${mappedValue}"`);
+                            }
+                        } 
+                        // Fall back to regular Paper Type mapping (non-conditional)
+                        else if (valueMappings['Paper Type'] && valueMappings['Paper Type'][sourcePaperValue]) {
+                            const mappedValue = valueMappings['Paper Type'][sourcePaperValue];
+                            if (mappedValue !== value) {
+                                appliedMappings++;
+                            }
+                            value = mappedValue;
+                            if (index < 3) {
+                                console.log(`  Fell back to regular Paper Type mapping: "${mappedValue}"`);
+                            }
+                        }
+                    } else if (column.key !== 'Product Type') {
+                        // Regular value mapping for other columns
+                        if (valueMappings[column.key] && valueMappings[column.key][value]) {
+                            const mappedValue = valueMappings[column.key][value];
+                            if (mappedValue !== value) {
+                                appliedMappings++;
+                            }
+                            value = mappedValue;
+                        }
                     }
                 }
                 
@@ -742,8 +1046,8 @@ function exportRemappedFile() {
 function downloadTemplate() {
     // Create template with exact column order and sample data
     const templateData = [
-        ['ISBN', 'Title', 'Trim Height', 'Trim Width', 'Paper Type', 'Binding Style', 'Page Extent', 'Lamination'],
-        ['9781234567890', 'Sample Book Title - Max 58 Characters', '198', '129', 'Amber Preprint 80 gsm', 'Limp', '320', 'Gloss']
+        ['ISBN', 'Title', 'Product Type', 'Trim Height', 'Trim Width', 'Paper Type', 'Binding Style', 'Page Extent', 'Lamination'],
+        ['9781234567890', 'Sample Book Title - Max 58 Characters', 'Standard', '198', '129', 'Amber Preprint 80 gsm', 'Limp', '320', 'Gloss']
     ];
     
     const worksheet = XLSX.utils.aoa_to_sheet(templateData);
@@ -768,6 +1072,7 @@ function resetApp() {
     document.getElementById('valueMappingSection').classList.add('d-none');
     document.getElementById('validationSection').classList.add('d-none');
     document.getElementById('exportSection').classList.add('d-none');
+    document.getElementById('configSection').classList.add('d-none');
     
     showAlert('App reset successfully', 'info');
 }
@@ -876,11 +1181,12 @@ function downloadConfig() {
     const config = {
         name: configName,
         description: configDescription,
-        version: '1.1',
+        version: '1.5',
         createdAt: new Date().toISOString(),
         columnMappings: columnMappings,
         fixedValues: fixedValues,
         valueMappings: valueMappings,
+        conditionalPaperMappings: conditionalPaperMappings,
         exportSettings: {
             includeHeaders: document.getElementById('includeHeaders')?.checked || true,
             validateData: document.getElementById('validateData')?.checked || true,
@@ -966,6 +1272,12 @@ function applyConfig(config) {
         
         // Apply value mappings
         valueMappings = { ...config.valueMappings } || {};
+        
+        // Apply conditional paper mappings if available
+        conditionalPaperMappings = { ...config.conditionalPaperMappings } || {
+            'Standard': {},
+            'Premium': {}
+        };
         
         // Apply export settings if available
         if (config.exportSettings) {
